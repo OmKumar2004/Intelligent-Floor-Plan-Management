@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <base href="https://www.floorplanmanager.com/" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Floor Plan Management System</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      line-height: 1.6;
+      margin: 0;
+      padding: 0;
+      background-color: #f4f4f4;
+    }
+    .container {
+      width: 80%;
+      margin: auto;
+      overflow: hidden;
+      padding: 20px;
+    }
+    header {
+      background: #35424a;
+      color: #ffffff;
+      padding-top: 30px;
+      min-height: 70px;
+      border-bottom: #e8491d 3px solid;
+    }
+    header a {
+      color: #ffffff;
+      text-decoration: none;
+      text-transform: uppercase;
+      font-size: 16px;
+    }
+    header .highlight, header .current a {
+      color: #e8491d;
+      font-weight: bold;
+    }
+    header a:hover {
+      color: #cccccc;
+      font-weight: bold;
+    }
+    .main-nav {
+      display: flex;
+      justify-content: space-around;
+      padding: 10px 0;
+    }
+    #content {
+      margin-top: 20px;
+    }
+    .page {
+      display: none;
+    }
+    .page.active {
+      display: block;
+    }
+    form {
+      background: #fff;
+      padding: 20px;
+      border-radius: 5px;
+      margin-bottom: 20px;
+    }
+    input[type="file"],
+    input[type="number"],
+    input[type="date"],
+    input[type="time"],
+    select,
+    button {
+      display: block;
+      width: 100%;
+      padding: 10px;
+      margin: 10px 0;
+    }
+    button {
+      background: #e8491d;
+      color: #fff;
+      border: none;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #35424a;
+    }
+    #floorplan {
+      width: 100%;
+      height: 500px;
+      border: 1px solid #ddd;
+      margin-top: 20px;
+    }
+    #preview {
+      max-width: 100%;
+      margin-top: 20px;
+    }
+    .error {
+      color: red;
+      font-size: 0.9em;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container">
+      <h1>Floor Plan Management System</h1>
+      <nav class="main-nav">
+        <a href="#" data-page="home" class="current">Home</a>
+        <a href="#" data-page="upload">Upload Floor Plan</a>
+        <a href="#" data-page="modify">Modify Floor Plan</a>
+        <a href="#" data-page="book">Book Meeting Room</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="container">
+    <div id="content">
+      <div id="home" class="page active">
+        <h2>Welcome to Floor Plan Management System</h2>
+        <p>Use the navigation menu to upload floor plans, modify existing plans, or book meeting rooms.</p>
+        <div id="floorplan"></div>
+      </div>
+
+      <div id="upload" class="page">
+        <h2>Upload Floor Plan</h2>
+        <form id="uploadForm">
+          <input type="file" id="floorplanFile" accept=".json,.xml,.svg" required>
+          <div id="fileError" class="error"></div>
+          <button type="submit">Upload</button>
+        </form>
+        <div id="preview"></div>
+      </div>
+
+      <div id="modify" class="page">
+        <h2>Modify Floor Plan</h2>
+        <form id="modifyForm">
+          <select id="roomSelect">
+            <option value="">Select a room to modify</option>
+          </select>
+          <input type="text" id="roomName" placeholder="Room Name">
+          <input type="number" id="roomCapacity" placeholder="Room Capacity" min="1">
+          <div id="capacityError" class="error"></div>
+          <button type="submit">Update Room</button>
+        </form>
+      </div>
+
+      <div id="book" class="page">
+        <h2>Book Meeting Room</h2>
+        <form id="bookingForm">
+          <input type="number" id="participants" placeholder="Number of Participants" required min="1">
+          <input type="date" id="date" required>
+          <input type="time" id="time" required>
+          <button type="submit">Find Available Rooms</button>
+        </form>
+        <div id="roomSuggestions"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/localforage/1.10.0/localforage.min.js"></script>
+  <script>
+    // Floor Plan Management System
+
+    // Global variables
+    let currentFloorPlan = null;
+    let versionHistory = [];
+    let offlineChanges = [];
+
+    // DOM Elements
+    const navLinks = document.querySelectorAll('.main-nav a');
+    const pages = document.querySelectorAll('.page');
+    const uploadForm = document.getElementById('uploadForm');
+    const modifyForm = document.getElementById('modifyForm');
+    const bookingForm = document.getElementById('bookingForm');
+    const roomSuggestions = document.getElementById('roomSuggestions');
+    const roomSelect = document.getElementById('roomSelect');
+    const fileInput = document.getElementById('floorplanFile');
+    const fileError = document.getElementById('fileError');
+    const preview = document.getElementById('preview');
+    const capacityInput = document.getElementById('roomCapacity');
+    const capacityError = document.getElementById('capacityError');
+
+    // Navigation
+    navLinks.forEach(link => {
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        const targetPage = e.target.getAttribute('data-page');
+        showPage(targetPage);
+      });
+    });
+
+    function showPage(pageId) {
+      pages.forEach(page => page.classList.remove('active'));
+      navLinks.forEach(link => link.classList.remove('current'));
+      document.getElementById(pageId).classList.add('active');
+      document.querySelector(`[data-page="${pageId}"]`).classList.add('current');
+    }
+
+    // Upload Floor Plan
+    uploadForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const file = fileInput.files[0];
+      fileError.textContent = '';
+      
+      if (!file) {
+        fileError.textContent = 'Please select a file to upload.';
+        return;
+      }
+
+      const allowedTypes = ['application/json', 'application/xml', 'image/svg+xml'];
+      if (!allowedTypes.includes(file.type)) {
+        fileError.textContent = 'Invalid file type. Please upload a JSON, XML, or SVG file.';
+        return;
+      }
+
+      try {
+        const fileContent = await readFile(file);
+        let newFloorPlan;
+
+        if (file.type === 'application/json') {
+          newFloorPlan = JSON.parse(fileContent);
+        } else if (file.type === 'application/xml' || file.type === 'image/svg+xml') {
+          newFloorPlan = parseXMLorSVG(fileContent);
+        }
+
+        if (!validateFloorPlan(newFloorPlan)) {
+          throw new Error('Invalid floor plan structure');
+        }
+
+        await updateFloorPlan(newFloorPlan);
+        alert('Floor plan uploaded successfully!');
+        showPage('home');
+        
+        // Preview the uploaded floor plan
+        renderFloorPlan();
+      } catch (error) {
+        console.error('Error uploading floor plan:', error);
+        fileError.textContent = `Error uploading floor plan: ${error.message}`;
+      }
+
+      // Reset the file input
+      fileInput.value = '';
+    });
+
+    // Read file content
+    function readFile(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (event) => resolve(event.target.result);
+        reader.onerror = (error) => reject(error);
+        reader.readAsText(file);
+      });
+    }
+
+    function validateFloorPlan(floorPlan) {
+      return (
+        floorPlan &&
+        Array.isArray(floorPlan.rooms) &&
+        floorPlan.rooms.every(room => 
+          room.name && 
+          typeof room.capacity === 'number' &&
+          typeof room.x === 'number' &&
+          typeof room.y === 'number' &&
+          typeof room.width === 'number' &&
+          typeof room.height === 'number'
+        )
+      );
+    }
+
+    function parseXMLorSVG(content) {
+      const parser = new DOMParser();
+      const xmlDoc = parser.parseFromString(content, "text/xml");
+      // This is a placeholder function. In a real application, you would
+      // implement proper XML/SVG parsing logic here.
+      return { rooms: [] };
+    }
+
+    // Update Floor Plan
+    async function updateFloorPlan(newFloorPlan) {
+      if (currentFloorPlan) {
+        const mergedFloorPlan = mergeFloorPlans(currentFloorPlan, newFloorPlan);
+        versionHistory.push(currentFloorPlan);
+        currentFloorPlan = mergedFloorPlan;
+      } else {
+        currentFloorPlan = newFloorPlan;
+      }
+
+      await localforage.setItem('currentFloorPlan', currentFloorPlan);
+      await localforage.setItem('versionHistory', versionHistory);
+
+      if (navigator.onLine) {
+        await syncWithServer();
+      }
+
+      renderFloorPlan();
+      updateRoomSelect();
+    }
+
+    // Merge Floor Plans (Simple merge strategy, can be improved)
+    function mergeFloorPlans(oldPlan, newPlan) {
+      return {...oldPlan, ...newPlan};
+    }
+
+    // Render Floor Plan
+    function renderFloorPlan() {
+      const floorplanElement = document.getElementById('floorplan');
+      floorplanElement.innerHTML = '';
+
+      if (currentFloorPlan && currentFloorPlan.rooms) {
+        const svg = document.createElementNS('http://www.website/svg', 'svg');
+        svg.setAttribute('width', '100%');
+        svg.setAttribute('height', '100%');
+        svg.setAttribute('viewBox', '0 0 1000 1000');
+
+        currentFloorPlan.rooms.forEach(room => {
+          const rect = document.createElementNS('http://www.website/svg', 'rect');
+          rect.setAttribute('x', room.x || 0);
+          rect.setAttribute('y', room.y || 0);
+          rect.setAttribute('width', room.width || 100);
+          rect.setAttribute('height', room.height || 100);
+          rect.setAttribute('fill', 'white');
+          rect.setAttribute('stroke', 'black');
+          svg.appendChild(rect);
+
+          const text = document.createElementNS('http://www.website/svg', 'text');
+          text.setAttribute('x', (room.x || 0) + 5);
+          text.setAttribute('y', (room.y || 0) + 20);
+          text.textContent = `${room.name} (${room.capacity})`;
+          svg.appendChild(text);
+        });
+
+        floorplanElement.appendChild(svg);
+      } else {
+        floorplanElement.textContent = 'No floor plan available. Please upload one.';
+      }
+    }
+
+    // Update Room Select
+    function updateRoomSelect() {
+      roomSelect.innerHTML = '<option value="">Select a room to modify</option>';
+      if (currentFloorPlan && currentFloorPlan.rooms) {
+        currentFloorPlan.rooms.forEach(room => {
+          const option = document.createElement('option');
+          option.value = room.name;
+          option.textContent = room.name;
+          roomSelect.appendChild(option);
+        });
+      }
+    }
+
+    // Modify Floor Plan
+    modifyForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const roomName = document.getElementById('roomName').value.trim();
+      const roomCapacity = parseInt(capacityInput.value, 10);
+      const selectedRoom = roomSelect.value;
+
+      capacityError.textContent = '';
+
+      if (!selectedRoom) {
+        alert('Please select a room to modify.');
+        return;
+      }
+
+      if (!roomName) {
+        alert('Please enter a room name.');
+        return;
+      }
+
+      if (isNaN(roomCapacity) || roomCapacity <= 0) {
+        capacityError.textContent = 'Please enter a valid room capacity (positive number).';
+        return;
+      }
+
+      try {
+        const updatedRooms = currentFloorPlan.rooms.map(room => {
+          if (room.name === selectedRoom) {
+            return { ...room, name: roomName, capacity: roomCapacity };
+          }
+          return room;
+        });
+
+        currentFloorPlan = { ...currentFloorPlan, rooms: updatedRooms };
+        await updateFloorPlan(currentFloorPlan);
+        alert('Room updated successfully!');
+        showPage('home');
+        
+        // Clear the form
+        document.getElementById('roomName').value = '';
+        capacityInput.value = '';
+        roomSelect.value = '';
+      } catch (error) {
+        console.error('Error updating room:', error);
+        alert('An error occurred while updating the room. Please try again.');
+      }
+    });
+
+    // Real-time validation for room capacity
+    capacityInput.addEventListener('input', (e) => {
+      const capacity = parseInt(e.target.value, 10);
+      if (isNaN(capacity) || capacity <= 0) {
+        capacityError.textContent = 'Please enter a valid positive number';
+      } else {
+        capacityError.textContent = '';
+      }
+    });
+
+    // Meeting Room Booking
+    bookingForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const participants = parseInt(document.getElementById('participants').value, 10);
+      const date = document.getElementById('date').value;
+      const time = document.getElementById('time').value;
+
+      if (isNaN(participants) || participants <= 0) {
+        alert('Please enter a valid number of participants.');
+        return;
+      }
+
+      if (!date || !time) {
+        alert('Please select both date and time for the booking.');
+        return;
+      }
+
+      try {
+        const availableRooms = await findAvailableRooms(participants, date, time);
+        displayRoomSuggestions(availableRooms, participants, date, time);
+      } catch (error) {
+        console.error('Error finding available rooms:', error);
+        alert('An error occurred while searching for available rooms. Please try again.');
+      }
+    });
+
+    // Find Available Rooms
+    async function findAvailableRooms(participants, date, time) {
+      if (!currentFloorPlan || !currentFloorPlan.rooms) {
+        throw new Error('No floor plan available');
+      }
+
+      // In a real application, you
+      // Find Available Rooms (continued)
+      const bookingDateTime = new Date(`${date}T${time}`);
+      const availableRooms = currentFloorPlan.rooms.filter(room => 
+        room.capacity >= participants && !isRoomBooked(room, bookingDateTime)
+      );
+
+      return availableRooms.sort((a, b) => a.capacity - b.capacity);
+    }
+
+    function isRoomBooked(room, bookingDateTime) {
+      // This is a placeholder function
+      // In a real application, you would check against actual bookings
+      return false;
+    }
+
+    // Display Room Suggestions
+    function displayRoomSuggestions(rooms, participants, date, time) {
+      roomSuggestions.innerHTML = '';
+      if (rooms.length === 0) {
+        roomSuggestions.textContent = 'No suitable rooms available for the selected criteria.';
+      } else {
+        const ul = document.createElement('ul');
+        rooms.forEach(room => {
+          const li = document.createElement('li');
+          li.textContent = `${room.name} (Capacity: ${room.capacity})`;
+          const bookButton = document.createElement('button');
+          bookButton.textContent = 'Book';
+          bookButton.addEventListener('click', () => bookRoom(room, participants, date, time));
+          li.appendChild(bookButton);
+          ul.appendChild(li);
+        });
+        roomSuggestions.appendChild(ul);
+      }
+    }
+
+    // Book Room
+    async function bookRoom(room, participants, date, time) {
+      try {
+        // In a real application, you would send this booking to a server
+        console.log(`Booking room ${room.name} for ${participants} participants on ${date} at ${time}`);
+        alert(`Room ${room.name} booked successfully!`);
+        // Clear the booking form
+        document.getElementById('participants').value = '';
+        document.getElementById('date').value = '';
+        document.getElementById('time').value = '';
+        roomSuggestions.innerHTML = '';
+      } catch (error) {
+        console.error('Error booking room:', error);
+        alert('An error occurred while booking the room. Please try again.');
+      }
+    }
+
+    // Sync with server
+    async function syncWithServer() {
+      console.log('Syncing with server...');
+      // In a real application, you would implement actual server synchronization here
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      console.log('Sync complete');
+    }
+
+    // Initialize
+    async function init() {
+      try {
+        currentFloorPlan = await localforage.getItem('currentFloorPlan');
+        versionHistory = await localforage.getItem('versionHistory') || [];
+        renderFloorPlan();
+        updateRoomSelect();
+      } catch (error) {
+        console.error('Error initializing app:', error);
+      }
+    }
+
+    init();
+
+    // File preview
+    fileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          if (file.type === 'image/svg+xml') {
+            preview.innerHTML = event.target.result;
+          } else {
+            preview.textContent = event.target.result;
+          }
+        };
+        reader.readAsText(file);
+      }
+    });
+  </script>
+</body>
+</html>
